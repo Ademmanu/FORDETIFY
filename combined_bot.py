@@ -1032,7 +1032,7 @@ class Database:
                 for row in cur.fetchall():
                     uid = row["user_id"]
                     task = {
-                        'user_id': uid, 'id': row["id"], 'label': row["label'],
+                        'user_id': uid, 'id': row["id"], 'label': row["label"],
                         'chat_ids': json.loads(row["chat_ids"]) if row["chat_ids"] else [],
                         'settings': json.loads(row["settings"]) if row["settings"] else {}
                     }
