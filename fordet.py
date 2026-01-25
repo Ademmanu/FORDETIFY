@@ -75,26 +75,27 @@ def get_utc1_time():
 
 def format_time_utc1_am_pm(dt=None):
     """
-    Format time in UTC+1 with AM/PM format, excluding seconds.
+    Format time in UTC+1 with AM/PM format.
     
     Args:
         dt: datetime object (optional, uses current time if not provided)
     
     Returns:
-        Formatted time string like: "2023-12-31 02:30 PM"
+        Formatted time string like: "Jan 25, 2024 2:30 PM"
     """
     if dt is None:
         dt = get_utc1_time()
     
-    # Format to AM/PM without seconds
-    time_str = dt.strftime("%Y-%m-%d %I:%M %p")
+    # Format to "Jan 25, 2024 2:30 PM" format
+    # %b = abbreviated month name, %d = day, %Y = year, %I = hour (12-hour), %M = minute, %p = AM/PM
+    time_str = dt.strftime("%b %d, %Y %I:%M %p")
     # Remove leading zero from hour if present
-    if time_str[11] == '0':
-        time_str = time_str[:11] + time_str[12:]
+    if time_str[time_str.find(',') + 6] == '0':  # Find the hour position after "Jan 25, 2024 "
+        time_str = time_str[:time_str.find(',') + 6] + time_str[time_str.find(',') + 7:]
     return time_str
 
 def format_time_from_timestamp(timestamp):
-    """Convert timestamp to UTC+1 AM/PM format without seconds"""
+    """Convert timestamp to UTC+1 AM/PM format in "Jan 25, 2024 2:30 PM" format"""
     utc_time = datetime.utcfromtimestamp(timestamp)
     utc1_time = utc_time + timedelta(hours=1)
     return format_time_utc1_am_pm(utc1_time)
@@ -4779,7 +4780,7 @@ async def notification_worker(worker_id: int):
                 from telegram import Bot
                 bot_instance = Bot(token=BOT_TOKEN)
             
-            # Use UTC+1 time with AM/PM format
+            # Use UTC+1 time with AM/PM format in "Jan 25, 2024 2:30 PM" format
             current_time_utc1 = format_time_utc1_am_pm()
             
             notification_msg = (
