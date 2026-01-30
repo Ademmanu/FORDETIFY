@@ -19,7 +19,7 @@ import threading
 import functools
 import re
 import signal
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Set, Callable, Any, DefaultDict
 from collections import OrderedDict, defaultdict, deque
 from dataclasses import dataclass
@@ -63,42 +63,6 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger("forwarder_duodetect")
-
-# ============================
-# TIMEZONE HELPER FUNCTIONS
-# ============================
-def get_utc1_time():
-    """Get current time in UTC+1 (Nigeria time)"""
-    utc_now = datetime.utcnow()
-    utc1_time = utc_now + timedelta(hours=1)  # UTC+1 for Nigeria
-    return utc1_time
-
-def format_time_utc1_am_pm(dt=None):
-    """
-    Format time in UTC+1 with AM/PM format.
-    
-    Args:
-        dt: datetime object (optional, uses current time if not provided)
-    
-    Returns:
-        Formatted time string like: "Jan 25, 2024 2:30 PM"
-    """
-    if dt is None:
-        dt = get_utc1_time()
-    
-    # Format to "Jan 25, 2024 2:30 PM" format
-    # %b = abbreviated month name, %d = day, %Y = year, %I = hour (12-hour), %M = minute, %p = AM/PM
-    time_str = dt.strftime("%b %d, %Y %I:%M %p")
-    # Remove leading zero from hour if present
-    if time_str[time_str.find(',') + 6] == '0':  # Find the hour position after "Jan 25, 2024 "
-        time_str = time_str[:time_str.find(',') + 6] + time_str[time_str.find(',') + 7:]
-    return time_str
-
-def format_time_from_timestamp(timestamp):
-    """Convert timestamp to UTC+1 AM/PM format in "Jan 25, 2024 2:30 PM" format"""
-    utc_time = datetime.utcfromtimestamp(timestamp)
-    utc1_time = utc_time + timedelta(hours=1)
-    return format_time_utc1_am_pm(utc1_time)
 
 # ============================
 # ENVIRONMENT VARIABLES
@@ -4585,7 +4549,7 @@ async def notify_user_flood_wait(user_id: int, wait_seconds: int):
         if wait_seconds % 60 > 0:
             wait_minutes += 1  # Round up
         
-        resume_time_utc1 = format_time_from_timestamp(time.time() + wait_seconds)
+        resume_time = datetime.fromtimestamp(time.time() + wait_seconds).strftime('%H:%M:%S')
         
         message = f"""⏰ **Flood Wait Alert**
 
@@ -4593,7 +4557,7 @@ Your account is temporarily limited by Telegram.
 
 📋 **Details:**
 • Wait time: {wait_minutes} minutes
-• Resumes at: {resume_time_utc1}
+• Resumes at: {resume_time}
 
 ⚠️ **Please note:**
 • This is a Telegram restriction, not the bot
@@ -4613,14 +4577,11 @@ async def notify_user_flood_wait_ended(user_id: int):
         from telegram import Bot
         bot = Bot(token=BOT_TOKEN)
         
-        current_time_utc1 = format_time_utc1_am_pm()
-        
         message = f"""✅ **Flood Wait Ended**
 
 Your account restriction has been lifted!
 
 📋 **Status:**
-• Time: {current_time_utc1}
 • Forwarding has resumed automatically
 • All queued messages are being sent
 • You can now send messages normally
@@ -4780,13 +4741,10 @@ async def notification_worker(worker_id: int):
                 from telegram import Bot
                 bot_instance = Bot(token=BOT_TOKEN)
             
-            # Use UTC+1 time with AM/PM format in "Jan 25, 2024 2:30 PM" format
-            current_time_utc1 = format_time_utc1_am_pm()
-            
             notification_msg = (
                 f"🚨 **DUPLICATE MESSAGE DETECTED!**\n\n"
                 f"**Task:** {task_label}\n"
-                f"**Time:** {current_time_utc1}\n\n"
+                f"**Time:** {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
                 f"📝 **Message Preview:**\n`{preview_text}`\n\n"
                 f"💬 **Reply to this message to respond to the duplicate!**\n"
                 f"(Swipe left on this message and type your reply)"
