@@ -19,7 +19,7 @@ import threading
 import functools
 import re
 import signal
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple, Set, Callable, Any, DefaultDict
 from collections import OrderedDict, defaultdict, deque
 from dataclasses import dataclass
@@ -128,6 +128,48 @@ DEFAULT_CONTAINER_MAX_RAM_MB = int(os.getenv("CONTAINER_MAX_RAM_MB", "512"))
 
 # GC interval
 GC_INTERVAL = int(os.getenv("GC_INTERVAL", "600"))
+
+# ============================
+# DATETIME UTILITIES
+# ============================
+def format_datetime(dt: datetime = None, timezone_offset: int = 1) -> str:
+    """
+    Format datetime in a cross-platform way: 'Jan 5, 2025 10:15 AM'
+    Uses UTC+1 by default (timezone_offset=1)
+    """
+    if dt is None:
+        dt = datetime.utcnow()
+    
+    # Convert to UTC+1 (or specified offset)
+    dt = dt.replace(tzinfo=timezone.utc)
+    dt = dt + timedelta(hours=timezone_offset)
+    
+    # Format: Jan 5, 2025 10:15 AM
+    # Try different format strings for cross-platform compatibility
+    try:
+        # Try Linux/macOS format first
+        formatted = dt.strftime('%b %-d, %Y %-I:%M %p')
+    except:
+        try:
+            # Try Windows format
+            formatted = dt.strftime('%b %#d, %Y %#I:%M %p')
+        except:
+            # Fallback format
+            day = dt.day
+            month_abbr = dt.strftime('%b')
+            year = dt.year
+            hour = dt.hour
+            minute = dt.minute
+            
+            # Determine AM/PM
+            am_pm = "AM" if hour < 12 else "PM"
+            hour_12 = hour % 12
+            if hour_12 == 0:
+                hour_12 = 12
+            
+            formatted = f"{month_abbr} {day}, {year} {hour_12}:{minute:02d} {am_pm}"
+    
+    return formatted
 
 # ============================
 # REGEX PATTERNS
@@ -1815,7 +1857,7 @@ def create_message_hash(message_text: str, sender_id: Optional[int] = None) -> s
         content = f"{sender_id}:{message_text.strip().lower()}"
     else:
         content = message_text.strip().lower()
-    return hashlib.md5(content.encode()).hexdigest()[:12]
+    return hashlib.md5(content.encode()).hexdig()[:12]
 
 def is_duplicate_message(user_id: int, chat_id: int, message_hash: str) -> bool:
     key = (user_id, chat_id)
@@ -2548,11 +2590,37 @@ async def handle_confirm_remove_user(update: Update, context: ContextTypes.DEFAU
             finally:
                 user_clients.pop(target_user_id, None)
         
-        # Mark user as logged out
+        # IMPORTANT FIX: Clear ALL user data from database
         try:
-            await db_call(db.save_user, target_user_id, None, None, None, False)
-        except Exception:
-            logger.exception("Error saving user logged_out state for %s", target_user_id)
+            conn = db.get_connection()
+            
+            if db.db_type == "sqlite":
+                cur = conn.cursor()
+                # Delete forwarding tasks
+                cur.execute("DELETE FROM forwarding_tasks WHERE user_id = ?", (target_user_id,))
+                # Delete monitoring tasks
+                cur.execute("DELETE FROM monitoring_tasks WHERE user_id = ?", (target_user_id,))
+                # Completely delete user from users table
+                cur.execute("DELETE FROM users WHERE user_id = ?", (target_user_id,))
+                conn.commit()
+            else:
+                with conn.cursor() as cur:
+                    # Delete forwarding tasks
+                    cur.execute("DELETE FROM forwarding_tasks WHERE user_id = %s", (target_user_id,))
+                    # Delete monitoring tasks
+                    cur.execute("DELETE FROM monitoring_tasks WHERE user_id = %s", (target_user_id,))
+                    # Completely delete user from users table
+                    cur.execute("DELETE FROM users WHERE user_id = %s", (target_user_id,))
+                conn.commit()
+                
+            logger.info(f"✅ Completely removed user {target_user_id} from database")
+        except Exception as e:
+            logger.exception(f"Error removing user {target_user_id} from database: {e}")
+            # Fallback: try to mark as logged out
+            try:
+                await db_call(db.save_user, target_user_id, None, None, None, False)
+            except Exception:
+                pass
         
         # Clear all caches
         phone_verification_states.pop(target_user_id, None)
@@ -2564,6 +2632,9 @@ async def handle_confirm_remove_user(update: Update, context: ContextTypes.DEFAU
         user_rate_limiters.pop(target_user_id, None)
         reply_states.pop(target_user_id, None)
         auto_reply_states.pop(target_user_id, None)
+        
+        # Clear auth cache
+        _auth_cache.pop(target_user_id, None)
         
         await query.edit_message_text(
             f"✅ **User `{target_user_id}` removed successfully!**",
@@ -4109,6 +4180,7 @@ async def handle_logout_confirmation(update: Update, context: ContextTypes.DEFAU
         )
         return True
 
+    # Disconnect and clean up client
     if user_id in user_clients:
         client = user_clients[user_id]
         try:
@@ -4137,11 +4209,39 @@ async def handle_logout_confirmation(update: Update, context: ContextTypes.DEFAU
         finally:
             user_clients.pop(user_id, None)
 
+    # IMPORTANT FIX: Clear ALL user data from database
     try:
-        await db_call(db.save_user, user_id, None, None, None, False)
-    except Exception:
-        pass
+        conn = db.get_connection()
+        
+        if db.db_type == "sqlite":
+            cur = conn.cursor()
+            # Delete forwarding tasks
+            cur.execute("DELETE FROM forwarding_tasks WHERE user_id = ?", (user_id,))
+            # Delete monitoring tasks
+            cur.execute("DELETE FROM monitoring_tasks WHERE user_id = ?", (user_id,))
+            # Completely delete user from users table (not just update)
+            cur.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
+            conn.commit()
+        else:
+            with conn.cursor() as cur:
+                # Delete forwarding tasks
+                cur.execute("DELETE FROM forwarding_tasks WHERE user_id = %s", (user_id,))
+                # Delete monitoring tasks
+                cur.execute("DELETE FROM monitoring_tasks WHERE user_id = %s", (user_id,))
+                # Completely delete user from users table (not just update)
+                cur.execute("DELETE FROM users WHERE user_id = %s", (user_id,))
+            conn.commit()
+            
+        logger.info(f"✅ Completely removed user {user_id} from database")
+    except Exception as e:
+        logger.exception(f"Error removing user {user_id} from database: {e}")
+        # Fallback: try to mark as logged out
+        try:
+            await db_call(db.save_user, user_id, None, None, None, False)
+        except Exception:
+            pass
     
+    # Clear all caches
     phone_verification_states.pop(user_id, None)
     forwarding_tasks_cache.pop(user_id, None)
     monitoring_tasks_cache.pop(user_id, None)
@@ -4152,9 +4252,12 @@ async def handle_logout_confirmation(update: Update, context: ContextTypes.DEFAU
     logout_states.pop(user_id, None)
     reply_states.pop(user_id, None)
     auto_reply_states.pop(user_id, None)
+    
+    # Clear auth cache
+    _auth_cache.pop(user_id, None)
 
     await update.message.reply_text(
-        "👋 **Account disconnected successfully!**\n\n✅ All your forwarding and monitoring tasks have been stopped.\n🔄 Use /login to connect again.",
+        "👋 **Account disconnected successfully!**\n\n✅ All your data has been removed.\nAll your forwarding and monitoring tasks have been stopped.\n🔄 Use /login to connect again.",
         parse_mode="Markdown",
     )
     return True
@@ -4549,7 +4652,11 @@ async def notify_user_flood_wait(user_id: int, wait_seconds: int):
         if wait_seconds % 60 > 0:
             wait_minutes += 1  # Round up
         
-        resume_time = datetime.fromtimestamp(time.time() + wait_seconds).strftime('%H:%M:%S')
+        # Use our new datetime format
+        resume_time = datetime.utcfromtimestamp(time.time() + wait_seconds)
+        resume_formatted = format_datetime(resume_time)
+        # Extract just the time part
+        resume_time_str = resume_formatted.split(' ')[-2] + ' ' + resume_formatted.split(' ')[-1]
         
         message = f"""⏰ **Flood Wait Alert**
 
@@ -4557,7 +4664,7 @@ Your account is temporarily limited by Telegram.
 
 📋 **Details:**
 • Wait time: {wait_minutes} minutes
-• Resumes at: {resume_time}
+• Resumes at: {resume_time_str}
 
 ⚠️ **Please note:**
 • This is a Telegram restriction, not the bot
@@ -4741,10 +4848,13 @@ async def notification_worker(worker_id: int):
                 from telegram import Bot
                 bot_instance = Bot(token=BOT_TOKEN)
             
+            # Use new datetime format
+            current_time = format_datetime()
+            
             notification_msg = (
                 f"🚨 **DUPLICATE MESSAGE DETECTED!**\n\n"
                 f"**Task:** {task_label}\n"
-                f"**Time:** {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                f"**Time:** {current_time}\n\n"
                 f"📝 **Message Preview:**\n`{preview_text}`\n\n"
                 f"💬 **Reply to this message to respond to the duplicate!**\n"
                 f"(Swipe left on this message and type your reply)"
