@@ -155,7 +155,7 @@ Or
 """
 
 # ============================
-# DATABASE CLASS (PostgreSQL ONLY)
+# DATABASE CLASS (PostgreSQL ONLY) - UPDATED WITH SCHEMA FIXES
 # ============================
 class Database:
     
@@ -273,11 +273,12 @@ class Database:
             self._thread_local.conn = None
     
     def init_db(self):
+        """Initialize database with schema verification and missing column fixes"""
         with self._conn_init_lock:
             conn = self.get_connection()
             
             with conn.cursor() as cur:
-                # Users table
+                # Create users table with all columns
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS users (
                         user_id BIGINT PRIMARY KEY,
@@ -290,40 +291,38 @@ class Database:
                     )
                 """)
                 
-                # Forwarding tasks table
+                # Create forwarding_tasks table with all columns
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS forwarding_tasks (
                         id SERIAL PRIMARY KEY,
                         user_id BIGINT,
                         label VARCHAR(255),
-                        source_ids JSONB,
-                        target_ids JSONB,
-                        filters JSONB,
+                        source_ids JSONB DEFAULT '[]'::jsonb,
+                        target_ids JSONB DEFAULT '[]'::jsonb,
+                        filters JSONB DEFAULT '{}'::jsonb,
                         is_active BOOLEAN DEFAULT TRUE,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        FOREIGN KEY (user_id) REFERENCES users (user_id),
                         UNIQUE(user_id, label)
                     )
                 """)
                 
-                # Monitoring tasks table
+                # Create monitoring_tasks table with all columns
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS monitoring_tasks (
                         id SERIAL PRIMARY KEY,
                         user_id BIGINT,
                         label VARCHAR(255),
-                        chat_ids JSONB,
-                        settings JSONB,
+                        chat_ids JSONB DEFAULT '[]'::jsonb,
+                        settings JSONB DEFAULT '{}'::jsonb,
                         is_active BOOLEAN DEFAULT TRUE,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        FOREIGN KEY (user_id) REFERENCES users (user_id),
                         UNIQUE(user_id, label)
                     )
                 """)
                 
-                # Allowed users table
+                # Create allowed_users table with all columns
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS allowed_users (
                         user_id BIGINT PRIMARY KEY,
@@ -332,6 +331,148 @@ class Database:
                         added_by BIGINT,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
+                """)
+                
+                # ============================================
+                # FIX MISSING COLUMNS FOR EXISTING TABLES
+                # ============================================
+                
+                # Fix users table - add missing columns if they don't exist
+                cur.execute("""
+                    DO $$
+                    BEGIN
+                        -- Users table fixes
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='is_logged_in') THEN
+                            ALTER TABLE users ADD COLUMN is_logged_in BOOLEAN DEFAULT FALSE;
+                        END IF;
+                        
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='phone') THEN
+                            ALTER TABLE users ADD COLUMN phone VARCHAR(255);
+                        END IF;
+                        
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='name') THEN
+                            ALTER TABLE users ADD COLUMN name TEXT;
+                        END IF;
+                        
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='session_data') THEN
+                            ALTER TABLE users ADD COLUMN session_data TEXT;
+                        END IF;
+                        
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='created_at') THEN
+                            ALTER TABLE users ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+                        END IF;
+                        
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='updated_at') THEN
+                            ALTER TABLE users ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+                        END IF;
+                        
+                        -- Forwarding tasks table fixes
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='forwarding_tasks' AND column_name='filters') THEN
+                            ALTER TABLE forwarding_tasks ADD COLUMN filters JSONB DEFAULT '{}'::jsonb;
+                        END IF;
+                        
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='forwarding_tasks' AND column_name='is_active') THEN
+                            ALTER TABLE forwarding_tasks ADD COLUMN is_active BOOLEAN DEFAULT TRUE;
+                        END IF;
+                        
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='forwarding_tasks' AND column_name='created_at') THEN
+                            ALTER TABLE forwarding_tasks ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+                        END IF;
+                        
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='forwarding_tasks' AND column_name='updated_at') THEN
+                            ALTER TABLE forwarding_tasks ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+                        END IF;
+                        
+                        -- Monitoring tasks table fixes
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='monitoring_tasks' AND column_name='settings') THEN
+                            ALTER TABLE monitoring_tasks ADD COLUMN settings JSONB DEFAULT '{}'::jsonb;
+                        END IF;
+                        
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='monitoring_tasks' AND column_name='is_active') THEN
+                            ALTER TABLE monitoring_tasks ADD COLUMN is_active BOOLEAN DEFAULT TRUE;
+                        END IF;
+                        
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='monitoring_tasks' AND column_name='created_at') THEN
+                            ALTER TABLE monitoring_tasks ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+                        END IF;
+                        
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='monitoring_tasks' AND column_name='updated_at') THEN
+                            ALTER TABLE monitoring_tasks ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+                        END IF;
+                        
+                        -- Allowed users table fixes
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='allowed_users' AND column_name='username') THEN
+                            ALTER TABLE allowed_users ADD COLUMN username VARCHAR(255);
+                        END IF;
+                        
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='allowed_users' AND column_name='is_admin') THEN
+                            ALTER TABLE allowed_users ADD COLUMN is_admin BOOLEAN DEFAULT FALSE;
+                        END IF;
+                        
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='allowed_users' AND column_name='added_by') THEN
+                            ALTER TABLE allowed_users ADD COLUMN added_by BIGINT;
+                        END IF;
+                        
+                        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='allowed_users' AND column_name='created_at') THEN
+                            ALTER TABLE allowed_users ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+                        END IF;
+                    END
+                    $$;
+                """)
+                
+                # Set default values for JSONB columns
+                cur.execute("""
+                    DO $$
+                    BEGIN
+                        -- Ensure JSONB columns have proper defaults
+                        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='forwarding_tasks' AND column_name='source_ids') THEN
+                            ALTER TABLE forwarding_tasks ALTER COLUMN source_ids SET DEFAULT '[]'::jsonb;
+                        END IF;
+                        
+                        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='forwarding_tasks' AND column_name='target_ids') THEN
+                            ALTER TABLE forwarding_tasks ALTER COLUMN target_ids SET DEFAULT '[]'::jsonb;
+                        END IF;
+                        
+                        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='forwarding_tasks' AND column_name='filters') THEN
+                            ALTER TABLE forwarding_tasks ALTER COLUMN filters SET DEFAULT '{}'::jsonb;
+                        END IF;
+                        
+                        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='monitoring_tasks' AND column_name='chat_ids') THEN
+                            ALTER TABLE monitoring_tasks ALTER COLUMN chat_ids SET DEFAULT '[]'::jsonb;
+                        END IF;
+                        
+                        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='monitoring_tasks' AND column_name='settings') THEN
+                            ALTER TABLE monitoring_tasks ALTER COLUMN settings SET DEFAULT '{}'::jsonb;
+                        END IF;
+                    END
+                    $$;
+                """)
+                
+                # Create foreign key constraints if they don't exist
+                cur.execute("""
+                    DO $$
+                    BEGIN
+                        -- Forwarding tasks foreign key
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.table_constraints 
+                            WHERE table_name='forwarding_tasks' AND constraint_name='forwarding_tasks_user_id_fkey'
+                        ) AND EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='users') THEN
+                            ALTER TABLE forwarding_tasks 
+                            ADD CONSTRAINT forwarding_tasks_user_id_fkey 
+                            FOREIGN KEY (user_id) REFERENCES users (user_id);
+                        END IF;
+                        
+                        -- Monitoring tasks foreign key
+                        IF NOT EXISTS (
+                            SELECT 1 FROM information_schema.table_constraints 
+                            WHERE table_name='monitoring_tasks' AND constraint_name='monitoring_tasks_user_id_fkey'
+                        ) AND EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='users') THEN
+                            ALTER TABLE monitoring_tasks 
+                            ADD CONSTRAINT monitoring_tasks_user_id_fkey 
+                            FOREIGN KEY (user_id) REFERENCES users (user_id);
+                        END IF;
+                    END
+                    $$;
                 """)
                 
                 # Create indexes
@@ -350,7 +491,7 @@ class Database:
                 
             conn.commit()
             
-            logger.info("PostgreSQL database initialized successfully")
+            logger.info("PostgreSQL database initialized successfully with schema verification")
     
     def get_user(self, user_id: int) -> Optional[Dict]:
         if user_id in self._user_cache:
