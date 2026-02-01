@@ -4,3 +4,4 @@ python-telegram-bot==21.7
 flask==2.3.3
 psutil==5.9.5
 psycopg[binary]==3.2.5
+pytz>=2023.3
