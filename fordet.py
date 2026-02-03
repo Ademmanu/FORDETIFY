@@ -195,10 +195,10 @@ class Database:
                 self._allowed_users_cache = set()
                 self._admin_cache = set()
                 
-            except Exception as e:
-                logger.error(f"Failed initializing database schema: {e}")
-                # Re-raise to stop bot if schema initialization fails
-                raise
+        except Exception as e:
+            logger.error(f"Failed initializing database schema: {e}")
+            # Re-raise to stop bot if schema initialization fails
+            raise
 			
 		atexit.register(self.close_connection)
     
