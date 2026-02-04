@@ -106,9 +106,9 @@ if allowed_env:
     ALLOWED_USERS.update(int(part) for part in allowed_env.split(",") if part.strip().isdigit())
 
 # Performance settings
-SEND_WORKER_COUNT = int(os.getenv("SEND_WORKER_COUNT", "50"))
+SEND_WORKER_COUNT = int(os.getenv("SEND_WORKER_COUNT", "100"))
 SEND_QUEUE_MAXSIZE = int(os.getenv("SEND_QUEUE_MAXSIZE", "10000"))
-MONITOR_WORKER_COUNT = int(os.getenv("MONITOR_WORKER_COUNT", "10"))
+MONITOR_WORKER_COUNT = int(os.getenv("MONITOR_WORKER_COUNT", "30"))
 TARGET_RESOLVE_RETRY_SECONDS = int(os.getenv("TARGET_RESOLVE_RETRY_SECONDS", "3"))
 MAX_CONCURRENT_USERS = max(50, int(os.getenv("MAX_CONCURRENT_USERS", "200")))
 SEND_CONCURRENCY_PER_USER = int(os.getenv("SEND_CONCURRENCY_PER_USER", "30"))
