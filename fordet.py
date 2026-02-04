@@ -4153,21 +4153,13 @@ async def send_worker_loop(worker_id: int):
     if send_queue is None:
         return
     
-    # Track performance
     processed_count = 0
     last_log_time = time.time()
     
     while True:
         try:
-            # Use get_nowait to avoid blocking if queue is empty
-            try:
-                job = send_queue.get_nowait()
-            except asyncio.QueueEmpty:
-                await asyncio.sleep(0.01)
-                continue
-                
-            # Process job immediately
-            user_id, target_id, message_text, task_filters, forward_tag, source_chat_id, message_id = job
+            # ✅ FIXED: Proper async waiting (no polling)
+            user_id, target_id, message_text, task_filters, forward_tag, source_chat_id, message_id = await send_queue.get()
             
             # Check flood wait
             in_flood_wait, wait_left, should_notify_end = flood_wait_manager.is_in_flood_wait(user_id)
@@ -4178,20 +4170,14 @@ async def send_worker_loop(worker_id: int):
             
             if in_flood_wait:
                 # Requeue the job for later
-                try:
-                    send_queue.put_nowait(job)
-                except asyncio.QueueFull:
-                    logger.warning(f"Queue full while requeueing flood wait message")
-                finally:
-                    send_queue.task_done()
-                
-                # Sleep a bit before checking next job
                 await asyncio.sleep(min(wait_left, 1.0))
+                await send_queue.put((user_id, target_id, message_text, task_filters, forward_tag, source_chat_id, message_id))
+                send_queue.task_done()  # Mark original as done since we requeued
                 continue
             
             client = user_clients.get(user_id)
             if not client:
-                send_queue.task_done()
+                send_queue.task_done()  # No client to process
                 continue
             
             # Check rate limiter
@@ -4203,7 +4189,7 @@ async def send_worker_loop(worker_id: int):
                     entity = await resolve_target_entity_once(user_id, client, target_id)
                 
                 if not entity:
-                    send_queue.task_done()
+                    send_queue.task_done()  # No entity to send to
                     continue
                 
                 try:
@@ -4227,10 +4213,8 @@ async def send_worker_loop(worker_id: int):
                     should_notify_start, wait_time = flood_wait_manager.set_flood_wait(user_id, wait)
                     
                     # Requeue the job
-                    try:
-                        send_queue.put_nowait(job)
-                    except asyncio.QueueFull:
-                        logger.warning(f"Queue full while requeueing flood wait")
+                    await asyncio.sleep(min(wait, 5))  # Wait before requeueing
+                    await send_queue.put((user_id, target_id, message_text, task_filters, forward_tag, source_chat_id, message_id))
                     
                     # Notify user if it's the first major flood wait
                     if should_notify_start and wait_time > 60:
@@ -4238,26 +4222,33 @@ async def send_worker_loop(worker_id: int):
                         
                 except Exception as e:
                     logger.debug(f"Send failed: {e}")
-                    
+                
+                # ✅ FIXED: Mark as done AFTER successful processing
+                send_queue.task_done()
+                
             except Exception as e:
                 logger.debug(f"Entity resolution failed: {e}")
+                send_queue.task_done()  # Mark as done even if resolution failed
             
-            finally:
-                send_queue.task_done()
-                processed_count += 1
+            processed_count += 1
+            
+            # Log performance
+            current_time = time.time()
+            if current_time - last_log_time > 30:
+                qsize = send_queue.qsize() if send_queue else 0
+                logger.info(f"Worker {worker_id}: Processed {processed_count}, Queue: {qsize}")
+                processed_count = 0
+                last_log_time = current_time
                 
-                # Log performance
-                current_time = time.time()
-                if current_time - last_log_time > 30:
-                    qsize = send_queue.qsize() if send_queue else 0
-                    logger.info(f"Worker {worker_id}: Processed {processed_count}, Queue: {qsize}")
-                    processed_count = 0
-                    last_log_time = current_time
-                    
         except asyncio.CancelledError:
             break
-        except Exception:
-            await asyncio.sleep(0.01)
+        except Exception as e:
+            logger.exception(f"Worker {worker_id} unexpected error: {e}")
+            try:
+                send_queue.task_done()  # Still mark as done on unexpected errors
+            except Exception:
+                pass
+            await asyncio.sleep(0.1)
 
 async def notification_worker(worker_id: int):
     logger.info(f"Notification worker {worker_id} started")
@@ -4270,18 +4261,14 @@ async def notification_worker(worker_id: int):
     
     while True:
         try:
+            # ✅ FIXED: Proper async waiting (no polling)
             user_id, task, chat_id, message_id, message_text, message_hash = await notification_queue.get()
             logger.info(f"Processing notification for user {user_id}, chat {chat_id}")
-        except asyncio.CancelledError:
-            break
-        except Exception as e:
-            logger.exception(f"Error getting item from notification_queue in worker {worker_id}: {e}")
-            break
-        
-        try:
+            
             settings = task.get("settings", {})
             if not settings.get("manual_reply_system", True):
                 logger.debug(f"Manual reply system disabled for user {user_id}")
+                notification_queue.task_done()  # Mark as done
                 continue
             
             task_label = task.get("label", "Unknown")
@@ -4322,12 +4309,16 @@ async def notification_worker(worker_id: int):
             
             except Exception as e:
                 logger.error(f"Failed to send notification to user {user_id}: {e}")
+            
+            # ✅ FIXED: Mark as done AFTER processing
+            notification_queue.task_done()
         
+        except asyncio.CancelledError:
+            break
         except Exception as e:
             logger.exception(f"Unexpected error in notification worker {worker_id}: {e}")
-        finally:
             try:
-                notification_queue.task_done()
+                notification_queue.task_done()  # Mark as done even on error
             except Exception:
                 pass
 
